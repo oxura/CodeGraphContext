@@ -457,4 +457,12 @@ async def run_tree_sitter_index_async(
             index_summary.setdefault("warnings", []).append(embed_warning)
 
     if job_id:
-        job_manager.update_job(job_id, status=JobStatus.COMPLETED, end_time=datetime.now())
+        # Completion may be partial: expose file failures to MCP/API clients as
+        # well as the CLI summary, without discarding successfully indexed files.
+        completion = {"status": JobStatus.COMPLETED, "end_time": datetime.now()}
+        if parse_failures:
+            job = job_manager.get_job(job_id)
+            completion["errors"] = list(job.errors if job else []) + [
+                f"{failure['path']}: {failure['error']}" for failure in parse_failures
+            ]
+        job_manager.update_job(job_id, **completion)

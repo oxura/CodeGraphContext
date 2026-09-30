@@ -139,11 +139,17 @@ class GraphBuilder:
 
         if not hasattr(self._parsed_cache, 'parsers'):
             self._parsed_cache.parsers = {}
+        if not hasattr(self._parsed_cache, 'parser_errors'):
+            self._parsed_cache.parser_errors = {}
 
         if lang_name not in self._parsed_cache.parsers:
             try:
                 self._parsed_cache.parsers[lang_name] = TreeSitterParser(lang_name)
+                self._parsed_cache.parser_errors.pop(lang_name, None)
             except Exception as e:
+                # Keep the reason in the same thread as the parser cache. Pre-scan
+                # callers still receive None; parse_file reports a genuine failure.
+                self._parsed_cache.parser_errors[lang_name] = str(e)
                 warning_logger(f"Failed to initialize parser for {lang_name}: {e}")
                 return None
         return self._parsed_cache.parsers[lang_name]
@@ -492,6 +498,15 @@ class GraphBuilder:
 
         parser = self.get_parser(ext)
         if not parser:
+            if ext in self.parsers:
+                reason = getattr(self._parsed_cache, "parser_errors", {}).get(
+                    self.parsers[ext], "Parser initialization returned no parser"
+                )
+                return {
+                    "path": str(path),
+                    "error": f"Failed to initialize parser for {self.parsers[ext]}: {reason}",
+                    "parse_failed": True,
+                }
             warning_logger(f"No parser found for file extension {ext}. Skipping {path}")
             return {"path": str(path), "error": f"No parser for {ext}", "unsupported": True}
 

@@ -52,23 +52,34 @@ def _load_tree_sitter_dependencies():
 
     try:
         from tree_sitter import Language as ImportedLanguage, Parser as ImportedParser
-        try:
-            from tree_sitter_language_pack import get_language as imported_get_language
-            # Test it immediately using a version-agnostic pattern
-            test_lang = imported_get_language('python')
-            try:
-                # 0.22+ style
-                test_parser = ImportedParser(test_lang)
-            except (TypeError, ValueError):
-                # < 0.22 style
-                test_parser = ImportedParser()
-                test_parser.set_language(test_lang)
-        except (ImportError, Exception):
-            # Fallback to tree_sitter_languages
-            from tree_sitter_languages import get_language as imported_get_language
     except ImportError as e:
         _tree_sitter_import_error = e
         raise _missing_tree_sitter_error(e) from e
+
+    pack_imported = False
+    try:
+        from tree_sitter_language_pack import get_language as imported_get_language
+        pack_imported = True
+        # Test it immediately using a version-agnostic pattern.
+        test_lang = imported_get_language('python')
+        try:
+            # 0.22+ style
+            test_parser = ImportedParser(test_lang)
+        except (TypeError, ValueError):
+            # < 0.22 style
+            test_parser = ImportedParser()
+            test_parser.set_language(test_lang)
+    except Exception as primary_error:
+        # Preserve legacy recovery, including an incompatible modern grammar.
+        try:
+            from tree_sitter_languages import get_language as imported_get_language
+        except ImportError as fallback_error:
+            if not pack_imported and isinstance(primary_error, ImportError):
+                _tree_sitter_import_error = fallback_error
+                raise _missing_tree_sitter_error(fallback_error) from fallback_error
+            # The modern package is installed but cannot initialize. Reporting a
+            # missing dependency here hides actionable download/cache/ABI errors.
+            raise primary_error from fallback_error
 
     _Language = ImportedLanguage
     _Parser = ImportedParser
