@@ -124,10 +124,40 @@ def _print_index_execution_summary(graph_builder: GraphBuilder) -> None:
         f"{summary.get('serialization_seconds', 0.0):.2f}",
     )
     console.print(table)
+    failures = summary.get("failed_file_details", [])
+    for failure in failures[:10]:
+        console.print(
+            f"Failed: {failure.get('path')}: {failure.get('error')}",
+            style="bold yellow",
+            markup=False,
+            highlight=False,
+        )
+    if len(failures) > 10:
+        console.print(f"... and {len(failures) - 10} more failed file(s).", style="yellow")
+    if failed_files:
+        console.print(
+            "After fixing the cause, use cgc reindex <path> to rebuild the index.",
+            style="yellow",
+            markup=False,
+            highlight=False,
+        )
     # Always-visible warnings (#1597): these describe an explicitly enabled
     # feature that did NOT run — they must not depend on the log level.
     for warning in summary.get("warnings", []):
         console.print(f"[bold yellow]⚠ {warning}[/bold yellow]")
+
+
+def _print_index_completion(graph_builder: GraphBuilder, success_message: str) -> None:
+    """Distinguish a completed partial index from a clean successful run."""
+    summary = getattr(graph_builder, "last_index_summary", None) or {}
+    failed_files = summary.get("failed_files", 0)
+    if failed_files:
+        console.print(
+            f"Indexing finished with {failed_files} failed file(s); see the errors above.",
+            style="bold yellow",
+        )
+    else:
+        console.print(success_message)
 
 
 def _initialize_services(
@@ -423,7 +453,10 @@ def index_helper(path: str, context: Optional[str] = None, no_progress: bool = F
         elapsed = time_end - time_start
         _print_call_resolution_diagnostics(graph_builder)
         _print_index_execution_summary(graph_builder)
-        console.print(f"[green]Successfully finished indexing: {path_obj} in {elapsed:.2f} seconds[/green]")
+        _print_index_completion(
+            graph_builder,
+            f"[green]Successfully finished indexing: {path_obj} in {elapsed:.2f} seconds[/green]",
+        )
         
         # Check if auto-watch is enabled
         try:
@@ -472,7 +505,10 @@ def add_package_helper(package_name: str, language: str, context: Optional[str] 
         asyncio.run(_run_index_with_progress(graph_builder, package_path, is_dependency=True, cgcignore_path=ctx.cgcignore_path))
         _print_call_resolution_diagnostics(graph_builder)
         _print_index_execution_summary(graph_builder)
-        console.print(f"[green]Successfully finished indexing package: {package_name}[/green]")
+        _print_index_completion(
+            graph_builder,
+            f"[green]Successfully finished indexing package: {package_name}[/green]",
+        )
     except Exception as e:
         console.print(f"[bold red]An error occurred during package indexing:[/bold red] {e}")
         raise typer.Exit(code=1)
@@ -921,7 +957,10 @@ def reindex_helper(path: str, context: Optional[str] = None, no_progress: bool =
         elapsed = time_end - time_start
         _print_call_resolution_diagnostics(graph_builder)
         _print_index_execution_summary(graph_builder)
-        console.print(f"[green]Successfully re-indexed: {path} in {elapsed:.2f} seconds[/green]")
+        _print_index_completion(
+            graph_builder,
+            f"[green]Successfully re-indexed: {path} in {elapsed:.2f} seconds[/green]",
+        )
     except Exception as e:
         console.print(f"[bold red]An error occurred during re-indexing:[/bold red] {e}")
         raise typer.Exit(code=1)

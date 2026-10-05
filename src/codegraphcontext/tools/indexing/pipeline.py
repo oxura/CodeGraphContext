@@ -188,7 +188,10 @@ async def run_tree_sitter_index_async(
                     imports_map,
                     repo_path_str=resolved_repo_path_str,
                 )
-            elif not file_data.get("unsupported"):
+            elif not file_data.get("unsupported") and not file_data.get("parser_initialization_failed"):
+                # Initialization failures previously wrote no File node. Keep
+                # that behavior so a repaired parser can be retried by a normal
+                # index, whose resume check compares the File-node census.
                 await asyncio.to_thread(
                     add_minimal_file_node,
                     Path(file_data["path"]),
@@ -457,12 +460,10 @@ async def run_tree_sitter_index_async(
             index_summary.setdefault("warnings", []).append(embed_warning)
 
     if job_id:
-        # Completion may be partial: expose file failures to MCP/API clients as
-        # well as the CLI summary, without discarding successfully indexed files.
-        completion = {"status": JobStatus.COMPLETED, "end_time": datetime.now()}
+        updates = {"status": JobStatus.COMPLETED, "end_time": datetime.now()}
         if parse_failures:
             job = job_manager.get_job(job_id)
-            completion["errors"] = list(job.errors if job else []) + [
-                f"{failure['path']}: {failure['error']}" for failure in parse_failures
-            ]
-        job_manager.update_job(job_id, **completion)
+            errors = list(job.errors or []) if job else []
+            errors.extend(f"{failure['path']}: {failure['error']}" for failure in parse_failures)
+            updates["errors"] = errors
+        job_manager.update_job(job_id, **updates)

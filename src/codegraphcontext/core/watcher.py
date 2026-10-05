@@ -279,9 +279,20 @@ class RepositoryEventHandler(FileSystemEventHandler):
             f"(callers={len(caller_paths)}, inheritors={len(inheritor_paths)})"
         )
 
+        # The merge can extend existing symbol-path lists in place. Snapshot
+        # their values while holding the update lock so a failed file update
+        # cannot discard imports or undo a later queued file's successful work.
+        previous_imports_map = {symbol: list(paths) for symbol, paths in self.imports_map.items()}
         self._update_imports_map_for_file(changed_path)
 
-        self.graph_builder.update_file_in_graph(changed_path, self.repo_path, self.imports_map)
+        updated_file_data = self.graph_builder.update_file_in_graph(
+            changed_path, self.repo_path, self.imports_map
+        )
+        if updated_file_data is None:
+            # GraphBuilder preserves the old file graph on initialization
+            # failure; preserve its import mappings and neighbor edges too.
+            self.imports_map = previous_imports_map
+            return
 
         # Every file in affected_paths is re-parsed below and fed back into
         # link_function_calls, so every one of them needs its outgoing CALLS

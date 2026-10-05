@@ -131,25 +131,26 @@ class GraphBuilder:
         """Get driver for a specific graph, or default."""
         return self.db_manager.get_driver(graph_name)
 
-    def get_parser(self, extension: str) -> Optional[TreeSitterParser]:
-        """Gets or creates a TreeSitterParser for the given extension (thread-local)."""
+    def get_parser(self, extension: str, *, raise_on_error: bool = False) -> Optional[TreeSitterParser]:
+        """Get a thread-local parser, optionally surfacing initialization errors.
+
+        Pre-scans keep the best-effort default; actual file parsing requests
+        errors so a broken supported parser is not mistaken for an unsupported
+        extension. Unknown extensions always return ``None``.
+        """
         lang_name = self.parsers.get(extension)
         if not lang_name:
             return None
 
         if not hasattr(self._parsed_cache, 'parsers'):
             self._parsed_cache.parsers = {}
-        if not hasattr(self._parsed_cache, 'parser_errors'):
-            self._parsed_cache.parser_errors = {}
 
         if lang_name not in self._parsed_cache.parsers:
             try:
                 self._parsed_cache.parsers[lang_name] = TreeSitterParser(lang_name)
-                self._parsed_cache.parser_errors.pop(lang_name, None)
             except Exception as e:
-                # Keep the reason in the same thread as the parser cache. Pre-scan
-                # callers still receive None; parse_file reports a genuine failure.
-                self._parsed_cache.parser_errors[lang_name] = str(e)
+                if raise_on_error:
+                    raise
                 warning_logger(f"Failed to initialize parser for {lang_name}: {e}")
                 return None
         return self._parsed_cache.parsers[lang_name]
@@ -454,10 +455,16 @@ class GraphBuilder:
         file_path_str = path.resolve().as_posix()
         repo_name = repo_path.name
 
-        self.delete_file_from_graph(file_path_str)
-
         if path.exists():
             file_data = self.parse_file(repo_path, path)
+
+            if file_data.get("parser_initialization_failed"):
+                # A transient parser outage must not discard a valid existing
+                # file graph. Retry the update after the parser is available.
+                error_logger(f"Skipping graph update for {file_path_str}: {file_data['error']}")
+                return None
+
+            self.delete_file_from_graph(file_path_str)
 
             if "error" not in file_data:
                 self.add_file_to_graph(file_data, repo_name, imports_map)
@@ -468,6 +475,7 @@ class GraphBuilder:
                 return file_data
             error_logger(f"Skipping graph add for {file_path_str} due to parsing error: {file_data['error']}")
             return None
+        self.delete_file_from_graph(file_path_str)
         return {"deleted": True, "path": file_path_str}
 
     def parse_file(self, repo_path: Path, path: Path, is_dependency: bool = False) -> Dict:
@@ -496,16 +504,24 @@ class GraphBuilder:
             debug_log(f"[parse_file] Adding generic file node for {path}")
             return {"path": str(path), "error": f"Generic file type {ext or path.name}", "unsupported": False}
 
-        parser = self.get_parser(ext)
+        try:
+            parser = self.get_parser(ext, raise_on_error=True)
+        except Exception as e:
+            error = f"Failed to initialize parser for {self.parsers.get(ext, ext)}: {e}"
+            error_logger(f"{path}: {error}")
+            return {
+                "path": str(path),
+                "error": error,
+                "parse_failed": True,
+                "parser_initialization_failed": True,
+            }
         if not parser:
             if ext in self.parsers:
-                reason = getattr(self._parsed_cache, "parser_errors", {}).get(
-                    self.parsers[ext], "Parser initialization returned no parser"
-                )
                 return {
                     "path": str(path),
-                    "error": f"Failed to initialize parser for {self.parsers[ext]}: {reason}",
+                    "error": f"Failed to initialize parser for {self.parsers[ext]}: no parser returned",
                     "parse_failed": True,
+                    "parser_initialization_failed": True,
                 }
             warning_logger(f"No parser found for file extension {ext}. Skipping {path}")
             return {"path": str(path), "error": f"No parser for {ext}", "unsupported": True}

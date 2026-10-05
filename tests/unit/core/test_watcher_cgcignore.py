@@ -15,7 +15,9 @@ def _graph_builder():
     graph_builder.get_caller_file_paths.return_value = set()
     graph_builder.get_inheritance_neighbor_paths.return_value = set()
     graph_builder.get_repo_class_lookup.return_value = {}
-    graph_builder.update_file_in_graph.return_value = None
+    # Successful updates return file data; None now preserves state and skips
+    # incremental relinking after parser initialization failure.
+    graph_builder.update_file_in_graph.return_value = {"path": "parsed.py"}
     return graph_builder
 
 

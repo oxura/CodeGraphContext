@@ -35,12 +35,24 @@ def _missing_tree_sitter_error(import_error: ImportError) -> ImportError:
         return ImportError(
             "Tree-sitter parsing is not available on Python 3.13 because "
             "tree-sitter-language-pack does not publish cp313 wheels. "
-            "Install CodeGraphContext with Python 3.12 or 3.14 to use indexing/parsing."
+            "Install CodeGraphContext with Python 3.12 or 3.14 to use indexing/parsing. "
+            f"Original import error: {import_error}"
         )
     return ImportError(
         "tree-sitter and tree-sitter-language-pack are required for code parsing. "
-        "Install them with: pip install codegraphcontext[parsing]"
+        "Install them with: pip install codegraphcontext[parsing]. "
+        f"Original import error: {import_error}"
     )
+
+
+def _probe_tree_sitter_provider(load_language, parser_class):
+    """Check a provider using the existing old/new Parser API negotiation."""
+    language = load_language("python")
+    try:
+        parser_class(language)
+    except (TypeError, ValueError):
+        parser = parser_class()
+        parser.set_language(language)
 
 
 def _load_tree_sitter_dependencies():
@@ -56,29 +68,49 @@ def _load_tree_sitter_dependencies():
         _tree_sitter_import_error = e
         raise _missing_tree_sitter_error(e) from e
 
-    pack_imported = False
+    primary_error = None
+    modern_imported = False
     try:
         from tree_sitter_language_pack import get_language as imported_get_language
-        pack_imported = True
-        # Test it immediately using a version-agnostic pattern.
-        test_lang = imported_get_language('python')
-        try:
-            # 0.22+ style
-            test_parser = ImportedParser(test_lang)
-        except (TypeError, ValueError):
-            # < 0.22 style
-            test_parser = ImportedParser()
-            test_parser.set_language(test_lang)
-    except Exception as primary_error:
-        # Preserve legacy recovery, including an incompatible modern grammar.
+        modern_imported = True
+        _probe_tree_sitter_provider(imported_get_language, ImportedParser)
+    except Exception as error:
+        primary_error = error
+
+    if primary_error is not None:
+        # Preserve working legacy recovery, even when the modern provider is
+        # installed but broken. Probe it before publishing any cached globals.
+        # Attempt recovery outside the primary except block so chaining the
+        # original error from a fallback error cannot create a context cycle.
+        fallback_error = None
+        legacy_imported = False
         try:
             from tree_sitter_languages import get_language as imported_get_language
-        except ImportError as fallback_error:
-            if not pack_imported and isinstance(primary_error, ImportError):
-                _tree_sitter_import_error = fallback_error
-                raise _missing_tree_sitter_error(fallback_error) from fallback_error
-            # The modern package is installed but cannot initialize. Reporting a
-            # missing dependency here hides actionable download/cache/ABI errors.
+            legacy_imported = True
+            _probe_tree_sitter_provider(imported_get_language, ImportedParser)
+        except Exception as error:
+            fallback_error = error
+
+        if fallback_error is not None:
+            if primary_error is fallback_error:
+                raise primary_error
+            modern_missing = (
+                not modern_imported
+                and isinstance(primary_error, ModuleNotFoundError)
+                and primary_error.name == "tree_sitter_language_pack"
+            )
+            if modern_missing:
+                legacy_missing = (
+                    not legacy_imported
+                    and isinstance(fallback_error, ModuleNotFoundError)
+                    and fallback_error.name == "tree_sitter_languages"
+                )
+                if legacy_missing:
+                    _tree_sitter_import_error = fallback_error
+                    raise _missing_tree_sitter_error(primary_error) from fallback_error
+                raise fallback_error from primary_error
+            # Cache/download/import failures from an installed modern provider
+            # remain the actionable error when legacy recovery also fails.
             raise primary_error from fallback_error
 
     _Language = ImportedLanguage

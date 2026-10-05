@@ -1258,7 +1258,8 @@ class TestWatcherIncrementalHandleModification:
         mock_gb.get_repo_class_lookup.return_value = {}
         mock_gb.link_function_calls.return_value = None
         mock_gb.link_inheritance.return_value = None
-        mock_gb.update_file_in_graph.return_value = None
+        # A successful update returns file data; None skips relinking on failure.
+        mock_gb.update_file_in_graph.return_value = {"path": "/fake/module.py"}
         watcher.graph_builder = mock_gb
 
         with patch.object(watcher, "_update_imports_map_for_file"):
@@ -1286,7 +1287,8 @@ class TestWatcherIncrementalHandleModification:
         mock_gb.get_repo_class_lookup.return_value = {}
         mock_gb.link_function_calls.return_value = None
         mock_gb.link_inheritance.return_value = None
-        mock_gb.update_file_in_graph.return_value = None
+        # A successful update returns file data; None skips relinking on failure.
+        mock_gb.update_file_in_graph.return_value = {"path": "/fake/module.py"}
         watcher.graph_builder = mock_gb
 
         with patch.object(watcher, "_update_imports_map_for_file"):
@@ -1314,7 +1316,8 @@ class TestWatcherIncrementalHandleModification:
         mock_gb.get_repo_class_lookup.return_value = {}
         mock_gb.link_function_calls.return_value = None
         mock_gb.link_inheritance.return_value = None
-        mock_gb.update_file_in_graph.return_value = None
+        # A successful update returns file data; None skips relinking on failure.
+        mock_gb.update_file_in_graph.return_value = {"path": "/fake/module.py"}
         watcher.graph_builder = mock_gb
 
         with patch.object(watcher, "_update_imports_map_for_file"):
